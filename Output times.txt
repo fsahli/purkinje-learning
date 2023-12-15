@@ -1,0 +1,5 @@
+Output, N=250, nIter=300
+
+Train time: 7689.286867380142 s
+
+Optimization time: 77850.49271321297 s
