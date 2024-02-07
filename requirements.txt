@@ -1,0 +1,11 @@
+numpy
+scipy
+meshio
+./JAX-BO
+jaxlib
+jax
+fim-python @ git+https://github.com/thomgrand/fim-python
+vtk
+pyvista
+pandas
+seaborn

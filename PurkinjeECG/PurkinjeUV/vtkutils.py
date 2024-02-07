@@ -4,7 +4,7 @@ import vtk
 import numpy as np
 from vtkmodules.numpy_interface import dataset_adapter as dsa
 from vtkmodules.util.numpy_support import numpy_to_vtkIdTypeArray,numpy_to_vtk
-from igbutils import read_igb, read_igb_header
+from PurkinjeECG.PurkinjeUV.igbutils import read_igb, read_igb_header
 
 def vtk_unstructuredgrid_from_list(xyz,cells,vtk_type):
     "Creates VTK ugrid from list of points and edges"

@@ -1,8 +1,8 @@
 import numpy as onp
 import jax.numpy as np
 from jax import jit, vmap, random
-from jax.experimental import stax
-from jax.experimental.stax import Dense, Tanh
+# from jax.experimental import stax
+# from jax.experimental.stax import Dense, Tanh
 from jax.nn.initializers import glorot_normal, normal
 from jax.scipy.stats import multivariate_normal
 from KDEpy import FFTKDE

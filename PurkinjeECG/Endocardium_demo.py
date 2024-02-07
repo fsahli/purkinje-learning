@@ -3,7 +3,7 @@ import numpy as np
 from vtkmodules.numpy_interface import dataset_adapter as dsa
 from fimpy.solver import FIMPY
 import meshio
-from vtkutils import vtk_extract_boundary_surfaces, vtkIGBReader
+from PurkinjeECG.PurkinjeUV.vtkutils import vtk_extract_boundary_surfaces, vtkIGBReader
 import os
 
 import pyvista as pv

@@ -24,13 +24,16 @@ with io.open(os.path.join(this_directory, 'README.md'), encoding='utf-8') as f:
 INSTALL_REQUIRES = [
     'numpy',
     'scipy',
-    'sklearn',
+    'scikit-learn',
     'KDEpy',
     'pyDOE',
     'numpyro',
-    'jax==0.2.19',
-    'jaxlib==0.1.70'
+    'jax',
+    'jaxlib'
 ]
+
+    # 'jax==0.2.19',
+    # 'jaxlib==0.1.70'
 
 setuptools.setup(
     name='jaxbo',

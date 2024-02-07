@@ -7,12 +7,19 @@ from jax.scipy.stats import norm
 
 @jit
 def EI(mean, std, best):
+    
     # from https://people.orie.cornell.edu/pfrazier/Presentations/2011.11.INFORMS.Tutorial.pdf
     delta = -(mean - best)
     deltap = -(mean - best)
     deltap = np.clip(deltap, a_min=0.)
     Z = delta/std
     EI = deltap - np.abs(deltap)*norm.cdf(-Z) + std*norm.pdf(Z)
+    
+#     ### test ###
+#     z0 = (best - mean) / std
+#     EI = -(mean - best) * norm.cdf(z0) + std * norm.pdf(z0)
+#     ### test ###
+    
     return -EI[0]
 
 @jit
@@ -41,6 +48,10 @@ def LW_LCBC(mean, std, weights, kappa = 2.0, threshold = 3.0):
 @jit
 def LCB(mean, std, kappa = 2.0):
     lcb = mean - kappa*std
+    
+#     ### test ###
+#     lcb = mean + kappa*std
+#     ### test ###
     return lcb[0]
 
 @jit

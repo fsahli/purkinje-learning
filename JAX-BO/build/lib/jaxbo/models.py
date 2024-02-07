@@ -4,18 +4,23 @@ from jax import vmap, jit, jvp, vjp, random
 from jax.scipy.linalg import cholesky, solve_triangular
 from jax.flatten_util import ravel_pytree
 from jax.scipy.special import expit as sigmoid
-from jax.ops import index_update, index
+#from jax.ops import index_update, index
 from functools import partial
 
 import jaxbo.kernels as kernels
 import jaxbo.acquisitions as acquisitions
 import jaxbo.initializers as initializers
 import jaxbo.utils as utils
-from jaxbo.optimizers import minimize_lbfgs
+from jaxbo.optimizers import minimize_lbfgs, minimize_lbfgs_grad ##########################
 from sklearn import mixture
 from pyDOE import lhs
 
 from jax.scipy.stats import norm
+
+from jax import value_and_grad #############################
+from jax.test_util import check_grads
+from jax import jacfwd, jacrev
+import jax
 
 #onp.random.seed(1234)
 
@@ -31,6 +36,8 @@ class GPmodel():
             self.kernel = kernels.Matern52
         elif options['kernel'] == 'Matern32':
             self.kernel = kernels.Matern32
+        elif options['kernel'] == 'Matern12':
+            self.kernel = kernels.Matern12
         elif options['kernel'] == 'RatQuad':
             self.kernel = kernels.RatQuad
         elif options['kernel'] == None:
@@ -49,13 +56,35 @@ class GPmodel():
         alpha = solve_triangular(L.T,solve_triangular(L, y, lower=True))
         NLML = 0.5*np.matmul(np.transpose(y),alpha) + \
                np.sum(np.log(np.diag(L))) + 0.5*N*np.log(2.0*np.pi)
+#         NLML = 0.5*np.matmul(np.transpose(y),alpha)
         return NLML
 
     @partial(jit, static_argnums=(0,))
-    def likelihood_value_and_grad(self, params, batch):
+    def likelihood_value_and_grad(self, params, batch):        
         fun = lambda params: self.likelihood(params, batch)
+        # previous: does not work (nan values)
         primals, f_vjp = vjp(fun, params)
         grads = f_vjp(np.ones_like(primals))[0]
+        # new: also does not work (nan values)
+#         primals, grads = value_and_grad(fun)(params)
+        
+#         # numerical_jvp
+#         # From: https://github.com/jacobjinkelly/jax/commit/3d8375f0218582182554e32a93b494526f8f7ba4, line 184
+#         def numerical_jvp(f=fun, primals=params, tangents=, eps=EPS):
+#             delta = scalar_mul(tangents, eps)
+#             f_pos = f(*add(primals, delta))
+#             f_neg = f(*sub(primals, delta))
+#             return scalar_mul(sub(f_pos, f_neg), 0.5 / eps)
+        
+#         fn_out = fun(params)
+#         grads = 
+        
+#         grads = jax.lax.clip_grad_norm(grads, 1e3)
+#         grads = vmap(jacfwd(fun))(np.array([params]))
+#         primals, grads = value_and_grad(self.likelihood)(params, batch)
+#         grads = jacfwd(fun)(params)
+#         check_grads(fun, (params,), order=1)  # check up to 2nd order derivatives
+
         return primals, grads
 
     def fit_gmm(self, num_comp = 2, N_samples = 10000, **kwargs):
@@ -194,7 +223,7 @@ class GPmodel():
         #print("x0 for bfgs", x0)
         dom_bounds = tuple(map(tuple, np.vstack((lb, ub)).T))
         for i in range(num_restarts):
-            pos, val = minimize_lbfgs(objective, x0[i,:], bnds = dom_bounds)
+            pos, val = minimize_lbfgs_grad(objective, x0[i,:], bnds = dom_bounds)  #####minimize_lbfgs
             loc.append(pos)
             acq.append(val)
         loc = np.vstack(loc)
@@ -206,6 +235,19 @@ class GPmodel():
     def compute_next_point_gs(self, X_cand, **kwargs):
         fun = lambda x: self.acquisition(x, **kwargs)
         acq = vmap(fun)(X_cand)
+        ###
+#         print ("acq values")
+#         print (np.sort(acq))
+#         ind = np.argsort(acq)
+#         print (X_cand[ind[0]:ind[0]+1,:])
+#         print (X_cand[ind[1]:ind[1]+1,:])
+#         print (X_cand[ind[2]:ind[2]+1,:])
+#         print (X_cand[ind[3]:ind[3]+1,:])
+#         print (X_cand[ind[4]:ind[4]+1,:])
+#         print (X_cand[ind[5]:ind[5]+1,:])
+#         print (X_cand[ind[6]:ind[6]+1,:])
+#         print ("next 5 ")
+        ###
         idx_best = np.argmin(acq)
         x_new = X_cand[idx_best:idx_best+1,:]
         return x_new
@@ -232,9 +274,15 @@ class GP(GPmodel):
     def train(self, batch, rng_key, num_restarts = 10):
         # Define objective that returns NumPy arrays
         def objective(params):
+            # TEST: compare jax grad vs finite differences, in a random direction
+#             fun = lambda params: self.likelihood(params, batch)
+#             check_grads(fun, (params,), order=1)  # check up to 2nd order derivatives
+#             value, grads = value_and_grad(self.likelihood)(params, batch)
+            # TEST: compare jax grad vs finite differences, in a random direction
             value, grads = self.likelihood_value_and_grad(params, batch)
             out = (onp.array(value), onp.array(grads))
-            return out
+#             print (f"out: {out}")
+            return out ############################################################## out[0]
         # Optimize with random restarts
         params = []
         likelihood = []
@@ -242,7 +290,8 @@ class GP(GPmodel):
         rng_key = random.split(rng_key, num_restarts)
         for i in range(num_restarts):
             init = initializers.random_init_GP(rng_key[i], dim)
-            p, val = minimize_lbfgs(objective, init)
+#             print (f"init : {init}")
+            p, val = minimize_lbfgs_grad(objective, init)
             params.append(p)
             likelihood.append(val)
         params = np.vstack(params)
@@ -250,6 +299,9 @@ class GP(GPmodel):
         #### find the best likelihood besides nan ####
         bestlikelihood = np.nanmin(likelihood)
         idx_best = np.where(likelihood == bestlikelihood)
+#         print (likelihood)
+#         print (bestlikelihood)
+#         print (idx_best)
         idx_best = idx_best[0][0]
         best_params = params[idx_best,:]
 

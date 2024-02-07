@@ -1,6 +1,6 @@
-from PurkinjeUV import PurkinjeTree, FractalTree, Parameters
+from PurkinjeECG.PurkinjeUV import PurkinjeTree, FractalTree, Parameters
 #from FractalTree import Fractal_Tree_3D
-from Endocardium_demo import EndocardialMesh
+from PurkinjeECG.Endocardium_demo import EndocardialMesh
 import matplotlib.pyplot as plt
 import meshio
 import os

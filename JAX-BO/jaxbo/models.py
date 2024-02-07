@@ -4,7 +4,7 @@ from jax import vmap, jit, jvp, vjp, random
 from jax.scipy.linalg import cholesky, solve_triangular
 from jax.flatten_util import ravel_pytree
 from jax.scipy.special import expit as sigmoid
-from jax.ops import index_update, index
+#from jax.ops import index_update, index
 from functools import partial
 
 import jaxbo.kernels as kernels

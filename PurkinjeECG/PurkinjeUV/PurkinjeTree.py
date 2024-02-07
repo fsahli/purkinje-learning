@@ -4,7 +4,7 @@ from collections import Counter
 from itertools import chain
 from fimpy.solver import FIMPY
 import meshio
-from vtkutils import *
+from PurkinjeECG.PurkinjeUV.vtkutils import *
 import numpy as np
 
 class PurkinjeTree:
