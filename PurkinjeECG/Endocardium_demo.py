@@ -55,31 +55,48 @@ class EndocardialMesh:
 
         dd_f0            = dsa.WrapDataObject(f0)
         xyz_f0           = dd_f0.Points
-        fiber_directions = dd_f0.PointData['fiber'] # dd.Points order is not the same as dd_f0.Points order
+
+        if 'fiber' in dd_f0.PointData.keys():
+            fiber_directions = dd_f0.PointData['fiber'] # dd.Points order is not the same as dd_f0.Points order
+            
+            # reorder fiber_directions to match order of xyz
+            # Compute the distance matrix between points in 'xyz' and 'xyz_f0'
+            distances = cdist(self.xyz, xyz_f0)
+
+            # Find the index of the closest point in 'xyz_f0' for each point in 'xyz'
+            closest_indices = np.argmin(distances, axis = 1)
+
+            # # Get the closest points from 'xyz_f0'
+            # closest_points = xyz_f0[closest_indices] # this should be equal to xyz
+
+            l = fiber_directions[closest_indices]
+
+            assert len(closest_indices) == len(set(closest_indices)), \
+            "There should be no repeated elements"
+
+            assert max(distances[np.arange(len(self.xyz)),closest_indices]) < 1e-3, \
+            "The minimum distances (from a point in xyz, to the same point in xyz_f0) must be low"
+            
+            # transform l from PointData to CellData
+            mesh           = pv.UnstructuredGrid(mesh_endo)
+            mesh["l"]      = l
+            mesh_cell_data = mesh.point_data_to_cell_data()
         
-        # reorder fiber_directions to match order of xyz
-        # Compute the distance matrix between points in 'xyz' and 'xyz_f0'
-        distances = cdist(self.xyz, xyz_f0)
+        elif 'fiber' in dd_f0.CellData.keys():
+            # It assumes the cell order is the same in the mesh and in the fiber files
+            fiber_directions = dd_f0.CellData['fiber']
 
-        # Find the index of the closest point in 'xyz_f0' for each point in 'xyz'
-        closest_indices = np.argmin(distances, axis = 1)
+            mesh_cell_data      = pv.UnstructuredGrid(mesh_endo)
+            mesh_cell_data["l"] = fiber_directions
 
-        # # Get the closest points from 'xyz_f0'
-        # closest_points = xyz_f0[closest_indices] # this should be equal to xyz
+            mesh_convert_data      = pv.UnstructuredGrid(mesh_endo)
+            mesh_convert_data["l"] = fiber_directions
+            mesh_point_data        = mesh_convert_data.cell_data_to_point_data()
+            l                      = mesh_point_data["l"]
 
-        l = fiber_directions[closest_indices]
-
-        assert len(closest_indices) == len(set(closest_indices)), \
-        "There should be no repeated elements"
-
-        assert max(distances[np.arange(len(self.xyz)),closest_indices]) < 1e-3, \
-        "The minimum distances (from a point in xyz, to the same point in xyz_f0) must be low"
+        else:
+            raise ValueError("Fibers directions should be named 'fiber'")
         
-        # transform l from PointData to CellData
-        mesh           = pv.UnstructuredGrid(mesh_endo)
-        mesh["l"]      = l
-        mesh_cell_data = mesh.point_data_to_cell_data()
-
         # normalize data
         l_cell_norms = np.linalg.norm(mesh_cell_data['l'], axis=1, keepdims=True)
         l_cell       = mesh_cell_data['l'] / l_cell_norms
