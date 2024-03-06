@@ -92,7 +92,8 @@ class EndocardialMesh:
             mesh_convert_data      = pv.UnstructuredGrid(mesh_endo)
             mesh_convert_data["l"] = fiber_directions
             mesh_point_data        = mesh_convert_data.cell_data_to_point_data()
-            l                      = mesh_point_data["l"]
+            l_vtkDataArray         = dsa.numpyTovtkDataArray(mesh_point_data["l"])
+            l                      = dsa.vtkDataArrayToVTKArray(l_vtkDataArray)
 
         else:
             raise ValueError("Fibers directions should be named 'fiber'")
@@ -374,9 +375,9 @@ class EndocardialMesh:
         aux_int_l = {}
         for electrode_name, electrode_coords in self.electrode_pos.items():
             r       = xyz - np.array(electrode_coords)
-            r_norm3 = r / np.linalg.norm(r, axis = 1)**3            
-            
-            Gi_nodal_T                 = np.transpose(self.Gi_nodal, axes=(0,2,1))
+            r_norm3 = r / np.linalg.norm(r, axis = 1)**3 # ok    
+
+            Gi_nodal_T                 = np.transpose(self.Gi_nodal, axes=(0,2,1))            
             aux_int_l[electrode_name]  = np.sum(Gi_nodal_T * r_norm3, axis = 1) # ok
         
         return aux_int_l
