@@ -10,7 +10,7 @@ import pickle
 
 class BO_Purkinje():
     # Class to perform Bayesian Optimization on a Purkinje tree.
-    def __init__(self, patient, meshes_list, init_length, length, w, l_segment, fascicles_length, fascicles_angles, branch_angle, N_it):
+    def __init__(self, patient, meshes_list, init_length, length, w, l_segment, fascicles_length, fascicles_angles, branch_angle, N_it, conductivity_params_Endo = None):
         self.patient          = patient
         self.meshes_list      = meshes_list
         self.init_length      = init_length
@@ -21,6 +21,9 @@ class BO_Purkinje():
         self.fascicles_angles = fascicles_angles
         self.branch_angle     = branch_angle
         self.N_it             = N_it
+
+        self.conductivity_params_Endo = conductivity_params_Endo # dictionary with parameters for conductivity tensor in myocardium (sigma_il, sigma_el, 
+                                                                 # sigma_it, sigma_et, alpha, beta). If None take default values.
 
         self.LVfractaltree, self.RVfractaltree = self.initialize()
 
@@ -107,7 +110,8 @@ class BO_Purkinje():
         
         Endo = EndocardialMesh(myo_mesh            = f"{dir}/{pat}_mesh_oriented.vtk",
                                electrodes_position = f"{dir}/electrode_pos.pkl",
-                               fibers              = f"{dir}/{pat}_f0_oriented.vtk")
+                               fibers              = f"{dir}/{pat}_f0_oriented.vtk",
+                               conductivity_params = self.conductivity_params_Endo)
 
         # we set activation in {L,R} trees
         # NOTE to simulate block, set to large value

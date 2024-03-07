@@ -17,7 +17,11 @@ class EndocardialMesh:
     SIDE_LV = 1
     SIDE_RV = 2
 
-    def __init__(self, myo_mesh, electrodes_position, fibers):
+    def __init__(self,
+                 myo_mesh,
+                 electrodes_position,
+                 fibers,
+                 conductivity_params = None):
         
         reader = vtk.vtkDataSetReader()
         reader.SetFileName(myo_mesh)
@@ -104,15 +108,25 @@ class EndocardialMesh:
         l_cell       = l_cell.astype(np.float64) # to avoid error in FIMPY
         
         # conductivity tensor field
-        sigma_il = 3.0 # mS/cm
-        sigma_el = 3.0 # mS/cm
-        sigma_it = 0.3 # mS/cm
-        sigma_et = 1.2 # mS/cm
-        
+        if conductivity_params is None: # default values
+            sigma_il = 3.0  # mS/cm
+            sigma_el = 3.0  # mS/cm
+            sigma_it = 0.3  # mS/cm
+            sigma_et = 1.2  # mS/cm
+
+            alpha    = 2.0  # cm ms^-1 mS^-1/2
+            beta     = 800. # cm^-1
+
+        else:
+            sigma_il = conductivity_params['sigma_il']
+            sigma_el = conductivity_params['sigma_el']
+            sigma_it = conductivity_params['sigma_it']
+            sigma_et = conductivity_params['sigma_et']
+            
+            alpha    = conductivity_params['alpha']
+            beta     = conductivity_params['beta']
+
         I = np.eye(self.xyz.shape[1])
-        
-        alpha = 2.0  # cm ms^-1 mS^-1/2
-        beta  = 800. # cm^-1 
         
         # Gi = sigma_it * I + (sigma_il - sigma_it) * l_cell[:,:,np.newaxis] @ l_cell[:,np.newaxis,:]
         # Ge = sigma_et * I + (sigma_el - sigma_et) * l_cell[:,:,np.newaxis] @ l_cell[:,np.newaxis,:]
