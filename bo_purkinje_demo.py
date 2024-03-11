@@ -10,7 +10,8 @@ import pickle
 
 class BO_Purkinje():
     # Class to perform Bayesian Optimization on a Purkinje tree.
-    def __init__(self, patient, meshes_list, init_length, length, w, l_segment, fascicles_length, fascicles_angles, branch_angle, N_it, conductivity_params_Endo = None):
+    def __init__(self, patient, meshes_list, init_length, length, w, l_segment, fascicles_length, fascicles_angles, branch_angle, N_it,
+                 conductivity_params_Endo = None, save_pmjs = False):
         self.patient          = patient
         self.meshes_list      = meshes_list
         self.init_length      = init_length
@@ -21,6 +22,7 @@ class BO_Purkinje():
         self.fascicles_angles = fascicles_angles
         self.branch_angle     = branch_angle
         self.N_it             = N_it
+        self.save_pmjs        = save_pmjs
 
         self.conductivity_params_Endo = conductivity_params_Endo # dictionary with parameters for conductivity tensor in myocardium (sigma_il, sigma_el, 
                                                                  # sigma_it, sigma_et, alpha, beta). If None take default values.
@@ -145,6 +147,14 @@ class BO_Purkinje():
         LVpmj_vals.fill(onp.inf)
         RVpmj_vals.fill(onp.inf)
 
+        # save pmjs
+        if self.save_pmjs:
+            if (LVpmj.dtype=='int32' or LVpmj.dtype=='int64') and (RVpmj.dtype=='int32' or RVpmj.dtype=='int64'):
+                onp.savetxt(f"output/patient{pat}/LVpmj.txt", LVpmj, fmt='%d')
+                onp.savetxt(f"output/patient{pat}/RVpmj.txt", RVpmj, fmt='%d')    
+            else:
+                raise ValueError("PMJs indices must be int")
+            
         # initialize the coupling points
         x0      = onp.r_[ LVpmj, RVpmj, PVCs ]
         x0_xyz  = onp.r_[ LVtree.xyz[LVpmj,:], RVtree.xyz[RVpmj,:], Endo.xyz[PVCs,:] ]
