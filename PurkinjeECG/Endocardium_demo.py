@@ -235,6 +235,7 @@ class EndocardialMesh:
         # solve in the rest of the tissue
         x0      = np.isfinite(act) # fimpy can receive it as int (index ids) or boolean
         x0_vals = act[x0]
+
         fim     = FIMPY.create_fim_solver(xyz, cells, self.D)
         act     = fim.comp_fim(x0, x0_vals) # activation in xyz
 
@@ -244,7 +245,8 @@ class EndocardialMesh:
         if return_only_pmjs:
             # Return activation (from FIMPY) on x0 (pmjs, points from the Tree)
             x0_pv  = pv.PolyData(x0_purkinje)
-            result = x0_pv.sample(pv.UnstructuredGrid(self.vtk_mesh))
+            result = x0_pv.sample(pv.UnstructuredGrid(self.vtk_mesh), tolerance = 1e-6, snap_to_closest_point = True)
+            assert np.sum(result['vtkValidPointMask'] == 0) == 0, 'Error while sampling to x0_purkinje'
             return result['activation']
         else:
             # Return activation om myocardium
