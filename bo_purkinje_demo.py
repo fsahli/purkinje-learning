@@ -11,7 +11,7 @@ import pickle
 class BO_Purkinje():
     # Class to perform Bayesian Optimization on a Purkinje tree.
     def __init__(self, patient, meshes_list, init_length, length, w, l_segment, fascicles_length, fascicles_angles, branch_angle, N_it,
-                 conductivity_params_Endo = None, save_pmjs = False):
+                 conductivity_params_Endo = None, save_pmjs = False, kmax = 8):
         self.patient          = patient
         self.meshes_list      = meshes_list
         self.init_length      = init_length
@@ -22,10 +22,11 @@ class BO_Purkinje():
         self.fascicles_angles = fascicles_angles
         self.branch_angle     = branch_angle
         self.N_it             = N_it
-        self.save_pmjs        = save_pmjs
 
         self.conductivity_params_Endo = conductivity_params_Endo # dictionary with parameters for conductivity tensor in myocardium (sigma_il, sigma_el, 
                                                                  # sigma_it, sigma_et, alpha, beta). If None take default values.
+        self.save_pmjs        = save_pmjs
+        self.kmax             = kmax # iterations to converge to ecg
 
         self.LVfractaltree, self.RVfractaltree = self.initialize()
 
@@ -167,9 +168,9 @@ class BO_Purkinje():
         SIDE_RV = (x0_side == 'R')
 
         # smaller tolerance
-        kmax    = 8
+        kmax    = self.kmax
         tol_act = 0.0  # absolute error on activation at PMJs
-        tol_ecg = 1e-4 # abs error on ECG
+        tol_ecg = 1e-2 # rel error on ECG
 
         # kmax    = 4
         # tol_act = 1.0  # absolute error on activation at PMJs
@@ -206,11 +207,11 @@ class BO_Purkinje():
 
             # save if requested
             if save:
-                LVtree.save(f"output/{pat}/LVtree_{k:02d}.vtu")
-                LVtree.save_pmjs(f"output/{pat}/LVpmjs_{k:02d}.vtu")
-                RVtree.save(f"output/{pat}/RVtree_{k:02d}.vtu")
-                RVtree.save_pmjs(f"output/{pat}/RVpmjs_{k:02d}.vtu")
-                Endo.save_pv(f"output/{pat}/Endo_{k:02d}.vtp")
+                LVtree.save(f"output/patient{pat}/LVtree_{k:02d}.vtu")
+                LVtree.save_pmjs(f"output/patient{pat}/LVpmjs_{k:02d}.vtu")
+                RVtree.save(f"output/patient{pat}/RVtree_{k:02d}.vtu")
+                RVtree.save_pmjs(f"output/patient{pat}/RVpmjs_{k:02d}.vtu")
+                Endo.save_pv(f"output/patient{pat}/Endo_{k:02d}.vtu")
 
             # NOTE: we do not check the error, because we pace the 3D model
             # at non-vertices, while the output is piecewise linear. Therefore,
@@ -229,7 +230,7 @@ class BO_Purkinje():
             ecg_new = Endo.new_get_ecg(record_array=False).copy()
         
             if ecg is not None:
-                ecg_err = onp.linalg.norm(ecg-ecg_new)
+                ecg_err = onp.linalg.norm(ecg - ecg_new) / onp.linalg.norm(ecg)
                 print(f"ECG error = {ecg_err}")
                 if ecg_err < tol_ecg:
                     break
