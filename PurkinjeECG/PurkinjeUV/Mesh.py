@@ -304,7 +304,7 @@ class Mesh:
         nNodes = self.verts.shape[0]
         nElem = self.connectivity.shape[0]
         
-        K = np.zeros((nNodes,nNodes))
+        K, M = self.computeLaplacian()
         F = np.zeros((nNodes,1))
         
             
@@ -321,15 +321,9 @@ class Mesh:
         
         Js = np.zeros((nElem,1))
         
-        
-        for k,tri in enumerate(self.connectivity):
-            j, i = np.meshgrid(tri,tri)
-            B, J = self.Bmatrix(k) 
-            Js[k] = J
-            k = self.StiffnessMatrix(B,J)
-            K[i, j] += k
+
             
-        T = np.linalg.solve(K[iActive, jActive],F[activeNodes,0]-np.dot(K[iKnown, jKnown],nodeVals))    
+        T = spsolve(K[iActive, jActive],F[activeNodes,0]-K[iKnown, jKnown].dot(nodeVals))    
         
         Tglobal = np.zeros(nNodes)
         
@@ -343,8 +337,8 @@ class Mesh:
     def computeLaplacian(self):
         nNodes = self.verts.shape[0]
         
-        K = np.zeros((nNodes,nNodes))
-        M = np.zeros((nNodes,nNodes))
+        K = sp.lil_matrix((nNodes,nNodes))
+        M = sp.lil_matrix((nNodes,nNodes))
 
         
         for k,tri in enumerate(self.connectivity):
@@ -356,7 +350,8 @@ class Mesh:
             M[i,j] += m
             
 
-        return K,M
+        return K.tocsr(),M.tocsr()
+
     def uvmap(self, filename = None):
         # this is only for meshes with one hole
         around_nodes, bc_u, bc_v = self.uv_bc()
@@ -411,13 +406,16 @@ class Mesh:
         around_nodes = list(self.boundary_edges[0])
         last_edge = self.boundary_edges[0]
 
-        while around_nodes[0] != around_nodes[-1]:
+
+        while (around_nodes[0] != around_nodes[-1]):
             edges = boundary_node2edge[around_nodes[-1]].copy()
             edges.remove(last_edge)
             nodes = list(edges[0])
             nodes.remove(around_nodes[-1])
             around_nodes.append(nodes[0])
             last_edge = edges[0]
+            if (len(around_nodes) >= self.verts.shape[0]):
+                raise "there is a problem with the boundary of the mesh"
 
         lengths = np.cumsum(np.linalg.norm(self.verts[around_nodes[:-1]] - self.verts[around_nodes[1:]], axis = 1))
         total_length = lengths[-1]

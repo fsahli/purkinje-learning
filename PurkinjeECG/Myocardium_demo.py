@@ -5,13 +5,51 @@ from fimpy.solver import FIMPY
 import meshio
 from PurkinjeECG.PurkinjeUV.vtkutils import vtk_extract_boundary_surfaces, vtkIGBReader
 import os
+import time
 
 import pyvista as pv
 import pickle
 from scipy.spatial.distance import cdist
 import matplotlib.pyplot as plt
 
-class EndocardialMesh:
+from scipy import sparse
+
+def Bmatrix(nodeCoords):
+
+    # NOTE: The definition of the parent tetrahedron by Hughes - "The Finite Element Method" (p. 170) is different from the 
+    # local order given by VTK (http://victorsndvg.github.io/FEconv/formats/vtk.xhtml) 
+    # Here we follow the VTK convention
+    x1 = nodeCoords[0][0]; x2 = nodeCoords[1][0]; x3 = nodeCoords[2][0]; x4 = nodeCoords[3][0]
+    y1 = nodeCoords[0][1]; y2 = nodeCoords[1][1]; y3 = nodeCoords[2][1]; y4 = nodeCoords[3][1]
+    z1 = nodeCoords[0][2]; z2 = nodeCoords[1][2]; z3 = nodeCoords[2][2]; z4 = nodeCoords[3][2]
+
+    x14 = x1 - x4; x34 = x3 - x4; x24 = x2 - x4
+    y14 = y1 - y4; y34 = y3 - y4; y24 = y2 - y4
+    z14 = z1 - z4; z34 = z3 - z4; z24 = z2 - z4
+
+    detJ = x14 * (y34 * z24 - z34 * y24) - y14 * (x34 * z24 - z34 * x24) + z14 * (x34 * y24 - y34 * x24)
+
+    Jinv_11 =        y34 * z24 - y24 * z34 ; Jinv_12 = -1. * (x34 * z24 - x24 * z34); Jinv_13 =        x34 * y24 - x24 * y34
+    Jinv_21 = -1. * (y14 * z24 - y24 * z14); Jinv_22 =        x14 * z24 - x24 * z14 ; Jinv_23 = -1. * (x14 * y24 - x24 * y14)
+    Jinv_31 =        y14 * z34 - y34 * z14 ; Jinv_32 = -1. * (x14 * z34 - x34 * z14); Jinv_33 =        x14 * y34 - x34 * y14
+
+    B_def = np.array([[1., 0., 0., -1.],
+                        [0., 0., 1., -1.],
+                        [0., 1., 0., -1.]])
+    
+    Jinv = np.array([[Jinv_11, Jinv_12, Jinv_13],
+                        [Jinv_21, Jinv_22, Jinv_23],
+                        [Jinv_31, Jinv_32, Jinv_33]])
+    
+    B = np.dot(Jinv.T,B_def)
+
+    return B, detJ
+
+def StiffnessMatrix(B,J, G = np.eye(3)):
+    # stiffness matrix for tetrahedra
+    return np.dot(B.T, np.dot(G,B)) / (6. * J)
+
+class MyocardialMesh:
     "VTK mesh of endocardium (left, right or both)"
 
     SIDE_LV = 1
@@ -43,6 +81,7 @@ class EndocardialMesh:
         act.fill(np.inf)
         dd.PointData.append(act,"activation")
         self.xyz = dd.Points
+        self.cells = dd.Cells.reshape((-1,5))[:,1:] 
 
         # electrodes positions
         with open(f"{electrodes_position}", "rb") as input_file:
@@ -147,14 +186,43 @@ class EndocardialMesh:
 
         # compute Gi_nodal
         self.Gi_nodal = sigma_it * I + (sigma_il - sigma_it) * l_nodes[:,:,np.newaxis] @ l_nodes[:,np.newaxis,:] # mS cm^-1
+        self.Gi_cell = sigma_it * I + (sigma_il - sigma_it) * l_cell[:,:,np.newaxis] @ l_cell[:,np.newaxis,:] # mS cm^-1
+
+        print('assembling Laplacian')
+        self.K = self.assemble_K(self.xyz, self.cells, self.Gi_cell)
 
         # Compute Gi.T * grad(Z_l) once
         self.aux_int_Vl = self.new_get_ecg_aux_Vl()
+        self.lead_field = self.get_lead_field()
         
         # # Save fibers directions
         # dd.CellData.append(l_cell,"l_cell")
         # dd.PointData.append(l_nodes,"l_nodes")
         # self.save_pv("test_fibers.vtu")
+        print('initializing FIM solver')
+        start_time = time.time()
+        cells = dd.Cells.reshape((-1,5))[:,1:] # tetra, dd.Cells includes the type of element
+        self.fim     = FIMPY.create_fim_solver(self.xyz, cells, self.D, device = 'gpu')
+        print(time.time() - start_time)
+
+    def assemble_K(self, xyz, cells, Gi):
+        # Gi is required at the cells
+        I,J,Vk = [],[],[]
+        for k,tri in enumerate(cells):
+            j, i = np.meshgrid(tri,tri)
+            I.extend(list(i.ravel()))
+            J.extend(list(j.ravel()))
+            B, Jac = Bmatrix(xyz[tri])
+            Kloc = StiffnessMatrix(B,Jac, Gi[k])
+
+            Vk.extend(list(Kloc.ravel()))
+
+        n = xyz.shape[0]
+        K = sparse.coo_matrix((Vk,(I,J)),shape=(n,n)).tocsr()
+
+        return K
+
+
 
     def find_closest_pmjs(self, pmjs):
         "Project PMJs from the tree onto the cell mesh"
@@ -220,6 +288,9 @@ class EndocardialMesh:
         x_proj = [0.0,0.0,0.0]
         dist   = vtk.reference(0.0)
 
+        print('computing closest nodes to PMJs')
+        start_time = time.time()
+
         for k in range(x0.shape[0]):
             x_orig   = x0[k,:]
             self.vtk_locator.FindClosestPoint(x_orig, x_proj, cellId, subId, dist)
@@ -231,16 +302,18 @@ class EndocardialMesh:
             v             = xyz[cell_pts,:] - x0[[k],:]
             new_act       = x0_vals[k] + np.sqrt( np.einsum('ij,kj,ki->k',Gcell,v,v) )
             act[cell_pts] = np.minimum(new_act, act[cell_pts])
+        print(time.time() - start_time)
 
         # solve in the rest of the tissue
         x0      = np.isfinite(act) # fimpy can receive it as int (index ids) or boolean
         x0_vals = act[x0]
-
-        fim     = FIMPY.create_fim_solver(xyz, cells, self.D)
-        act     = fim.comp_fim(x0, x0_vals) # activation in xyz
+        print('solving')
+        start_time = time.time()
+        act     = self.fim.comp_fim(x0, x0_vals) # activation in xyz
+        print(time.time() - start_time)
 
         # update activation in VTK
-        dd.PointData['activation'][:] = act
+        dd.PointData['activation'][:] = act.get()
         
         if return_only_pmjs:
             # Return activation (from FIMPY) on x0 (pmjs, points from the Tree)
@@ -305,35 +378,45 @@ class EndocardialMesh:
         save_Vm    = False
         save_gradU = False
 
+        # mesh      = pv.UnstructuredGrid(self.vtk_mesh)
+        
+        # working with nodal values
+        # mesh_grad = mesh.compute_derivative(scalars='activation')
+        # grad_u    = mesh_grad["gradient"]
+
+        # mesh_aux  = pv.UnstructuredGrid(self.vtk_mesh)
+        
         for n_t, req_time in enumerate(np.linspace(req_time_ini, req_time_fin, n_times)):
             Vm = V0 + (V1-V0)/2*(1+np.tanh( (req_time - uu)/eps ))
+            #dVm =  (V1 - V0) / (2 * eps) * ( 1 / np.cosh((req_time - uu) / eps)**2)
             
             if save_Vm:
                 dd.PointData.append(Vm, f"Vm_{req_time:03d}")
 
-            mesh      = pv.UnstructuredGrid(self.vtk_mesh)
-            mesh["U"] = Vm
+            # mesh      = pv.UnstructuredGrid(self.vtk_mesh)
+            # mesh["U"] = Vm
             
-            # working with nodal values
-            mesh_grad = mesh.compute_derivative(scalars='U')
-            grad_U    = mesh_grad["gradient"]
+            # # working with nodal values
+            # mesh_grad = mesh.compute_derivative(scalars='U')
+            # grad_U    = mesh_grad["gradient"]
             
-            mesh_aux  = pv.UnstructuredGrid(self.vtk_mesh)
-            mesh_aux.point_data.clear()
-            mesh_aux.cell_data.clear()
             
-            for electrode_name in self.electrode_pos.keys():
-                V_l_nodes = np.einsum('ij,ij->i', grad_U, self.aux_int_Vl[electrode_name])
-                mesh_aux[electrode_name] = V_l_nodes
+            # mesh_aux.point_data.clear()
+            # mesh_aux.cell_data.clear()
+            
+            # for electrode_name in self.electrode_pos.keys():
+            #     V_l_nodes = np.einsum('ij,ij->i', grad_u*dVm[:,None], self.aux_int_Vl[electrode_name])
+            #     mesh_aux[electrode_name] = V_l_nodes
 
-            # compute integral
-            V_l_integrate = mesh_aux.integrate_data()
+            # # compute integral
+            # V_l_integrate = mesh_aux.integrate_data()
             for electrode_name in self.electrode_pos.keys():
-                V_l_dict[electrode_name][n_t] = V_l_integrate[electrode_name][0]
+                V_l_dict[electrode_name][n_t] = np.dot(self.lead_field[electrode_name], self.K.dot(Vm))
+                # V_l_dict[electrode_name][n_t] = V_l_integrate[electrode_name][0]
             
             if save_gradU:
-                dd.PointData.append(grad_U, f"U_grad_{n_t:03d}")
- 
+                dd.PointData.append(grad_u, f"U_grad_{n_t:03d}")
+             
         if save_Vm or save_gradU:
             self.save_pv("test_vm.vtu")
 
@@ -397,3 +480,13 @@ class EndocardialMesh:
             aux_int_l[electrode_name]  = np.sum(Gi_nodal_T * r_norm3, axis = 1) # ok
         
         return aux_int_l
+    
+    def get_lead_field(self):
+        aux_int_l = {}
+        for electrode_name, electrode_coords in self.electrode_pos.items():
+            r       = self.xyz - np.array(electrode_coords)
+
+            aux_int_l[electrode_name]  = 1 / np.linalg.norm(r, axis = 1) # ok
+        
+        return aux_int_l
+

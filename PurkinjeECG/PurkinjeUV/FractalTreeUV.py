@@ -3,6 +3,8 @@ from scipy.spatial import cKDTree
 from collections import defaultdict
 from .Mesh import Mesh
 import meshio
+import pyvista as pv
+import vtk
 
 
 class Edge:
@@ -25,6 +27,19 @@ def point_in_mesh(point, mesh):
     point = np.append(point, np.zeros(1))
     _,tri,_,_ = mesh.project_new_point(point, 5)
     return tri >= 0
+
+def point_in_mesh_vtk(point, loc):
+    point = np.append(point, np.zeros(1))
+    cellId = vtk.reference(0)
+    subId  = vtk.reference(0)
+    d = vtk.reference(0.0)
+    ppoint = np.zeros(3)
+    loc.FindClosestPoint(point, ppoint, cellId, subId, d)
+    return d.get() < 1e-9
+
+
+    
+
 
 class Parameters:
     """Class to specify the parameters of the fractal tree.
@@ -75,13 +90,34 @@ class FractalTree:
         self.m = Mesh(params.meshfile)
         print('computing uv map')
         self.m.compute_uvscaling()
+
         self.mesh_uv = Mesh(verts = np.concatenate((self.m.uv,np.zeros((self.m.uv.shape[0],1))), axis =1), connectivity= self.m.connectivity)
+        mpv = pv.read(params.meshfile)
+        mpv.points = self.mesh_uv.verts
+        self.loc = vtk.vtkCellLocator()
+        self.loc.SetDataSet(mpv)
+        self.loc.BuildLocator()
         self.scaling_nodes = np.array(self.mesh_uv.tri2node_interpolation(self.m.uvscaling))
         self.params = params
+    # def scaling(self,x):
+    #     x = np.append(x, np.zeros(1))
+
+    #     f, _, tri = eval_field(x, self.scaling_nodes, self.mesh_uv)
+
+    #     return np.sqrt(f), tri
     def scaling(self,x):
         x = np.append(x, np.zeros(1))
-        f, _, tri = eval_field(x, self.scaling_nodes, self.mesh_uv)
-        return np.sqrt(f), tri
+        cellId = vtk.reference(0)
+        subId  = vtk.reference(0)
+        d = vtk.reference(0.0)
+        ppoint = np.zeros(3)
+        self.loc.FindClosestPoint(x, ppoint, cellId, subId, d)
+        if d.get() > 1e-3:
+            tri = -1
+        else:
+            tri = cellId.get()
+
+        return np.sqrt(self.m.uvscaling[tri]), tri
     
     def grow_tree(self):
         branches = defaultdict(list)
@@ -96,10 +132,7 @@ class FractalTree:
         second_node = self.mesh_uv.verts[self.params.second_node_id][:2]
         init_dir = second_node - init_node
         init_dir /= np.linalg.norm(init_dir)
-        s, tri = self.scaling(init_node) 
-        if tri < 0:
-          raise "the initial node is outside the domain"
-        nodes = [init_node, init_node + s*dx*init_dir]
+        nodes = [init_node, init_node + dx*init_dir]
         edges = [Edge(0,1,nodes,None,branch_id)]
 
 
@@ -181,7 +214,11 @@ class FractalTree:
                     new_dir /= np.linalg.norm(new_dir)
                     s, tri = self.scaling(nodes[edge.n2]) 
                     new_node = nodes[edge.n2] + new_dir*dx*s
-                    if ~point_in_mesh(new_node, self.mesh_uv):
+                    # aa = point_in_mesh(new_node, self.mesh_uv)
+                    # bb = point_in_mesh_vtk(new_node, self.loc)
+                    # if aa != bb:
+                    #     print(new_node,aa,bb)
+                    if not point_in_mesh_vtk(new_node, self.loc):
                         end_nodes.append(edge.n2)
                         continue
                     new_node_id = len(nodes)
@@ -198,37 +235,64 @@ class FractalTree:
 
             for i in range(int(branch_length/dx)):
                 growing_queue = []
-
+                tree = cKDTree(nodes)
+                new_nodes = []
+                last_node = len(nodes)
                 while len(edge_queue) > 0:
                     edge_id = edge_queue.pop(0)
                     edge = edges[edge_id]
                     # collision detection
-                    temp_nodes = np.array(nodes)
-                    temp_nodes[branches[edge.branch]] = np.array([1e9,1e9])
-                    temp_nodes[branches[sister_branches[edge.branch]]] = np.array([1e9,1e9])
-                    tree = cKDTree(temp_nodes)
+                    # temp_nodes = np.array(nodes)
+                    # temp_nodes[branches[edge.branch]] = np.array([1e9,1e9])
+                    # temp_nodes[branches[sister_branches[edge.branch]]] = np.array([1e9,1e9])
+                    # tree = cKDTree(temp_nodes)
+
+
+                    # nodes[branches[edge.branch]] = np.array([1e9,1e9])
+                    # nodes[branches[sister_branches[edge.branch]]] = np.array([1e9,1e9])
+                    
                     pred_node = nodes[edge.n2]# + dx*edge.dir
-                    dist, closest = tree.query(pred_node)
+  
+                    all_dist = np.linalg.norm(nodes - pred_node, axis = 1)
+                    all_dist[branches[edge.branch]] = 1e9
+                    sister_dist = all_dist[branches[sister_branches[edge.branch]]]
+                    all_dist[branches[sister_branches[edge.branch]]] = 1e9
                     s, tri = self.scaling(nodes[edge.n2]) 
-                    if dist < 0.9*dx*s:
+
+                    if all_dist.min() < 0.9*dx*s:
                         end_nodes.append(edge.n2)
                         continue
 
                     # grad calculation
-                    temp_nodes = np.array(nodes)
-                    temp_nodes[branches[edge.branch]] = np.array([1e9,1e9])
-                    tree = cKDTree(temp_nodes)
-                    pred_node = nodes[edge.n2]# + dx*edge.dir
-                    dist, closest = tree.query(pred_node)
-                    grad_dist = (pred_node - nodes[closest])/dist
+                    all_dist[branches[sister_branches[edge.branch]]] = sister_dist
+                    # temp_nodes = np.array(new_nodes)
+
+
+                    # temp_nodes = np.array(nodes)
+                    # temp_nodes[branches[edge.branch]] = np.array([1e9,1e9])
+                    # ttree = cKDTree(temp_nodes)
+                    # pred_node = nodes[edge.n2]# + dx*edge.dir
+                    # dist, closest = ttree.query(pred_node)
+                    # for d, c in zip(dist, closest):
+                    #     if c not in [edge.n2] + branches[edge.branch]:
+                    #         break
+                    grad_dist = (pred_node - nodes[np.argmin(all_dist)])/(all_dist.min())
+                   # grad_dist = (pred_node - closest_node)/d_final
+
+
                     new_dir = edge.dir + w*grad_dist
                     new_dir /= np.linalg.norm(new_dir)
                     new_node = nodes[edge.n2] + new_dir*dx*s
                     new_node_id = len(nodes)
-                    if ~point_in_mesh(new_node, self.mesh_uv):
+                    # aa = point_in_mesh(new_node, self.mesh_uv)
+                    # bb = point_in_mesh_vtk(new_node, self.loc)
+                    # if aa != bb:
+                    #     print(new_node,aa,bb)
+                    if not point_in_mesh_vtk(new_node, self.loc):            
                         end_nodes.append(edge.n2)
                         continue
                     nodes.append(new_node)
+                    new_nodes.append(new_node)
                     growing_queue.append(len(edges))
                     branches[edge.branch].append(new_node_id)
                     edges.append(Edge(edge.n2, new_node_id,nodes, edge_id, edge.branch))
@@ -255,21 +319,5 @@ class FractalTree:
         line = meshio.Mesh(np.array(self.nodes_xyz), [('line',np.array(self.connectivity))])
         line.write(filename)
 
-
-if __name__ == '__main__':
-    params = Parameters()
-    params.init_node_id = 738
-    params.second_node_id = 210
-    params.l_segment = 0.01
-    params.init_length = 0.3
-    params.length= 0.15
-    params.meshfile = 'data/ellipsoid.obj'
-    params.fascicles_length = [20*params.l_segment, 40*params.l_segment]
-    params.fascicles_angles = [-0.4, 0.5] # in radians
-
-    tree = FractalTree(params)
-
-    tree.grow_tree()
-    tree.save('output/ellipsoid_purkinje.vtu')
 
 

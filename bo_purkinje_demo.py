@@ -1,6 +1,5 @@
 from PurkinjeECG.PurkinjeUV import PurkinjeTree, FractalTree, Parameters
 #from FractalTree import Fractal_Tree_3D
-from PurkinjeECG.Endocardium_demo import EndocardialMesh
 import matplotlib.pyplot as plt
 import meshio
 import os
@@ -11,7 +10,7 @@ import pickle
 class BO_Purkinje():
     # Class to perform Bayesian Optimization on a Purkinje tree.
     def __init__(self, patient, meshes_list, init_length, length, w, l_segment, fascicles_length, fascicles_angles, branch_angle, N_it,
-                 conductivity_params_Endo = None, save_pmjs = False, kmax = 8):
+                 myocardium, save_pmjs = False, kmax = 8):
         self.patient          = patient
         self.meshes_list      = meshes_list
         self.init_length      = init_length
@@ -23,8 +22,7 @@ class BO_Purkinje():
         self.branch_angle     = branch_angle
         self.N_it             = N_it
 
-        self.conductivity_params_Endo = conductivity_params_Endo # dictionary with parameters for conductivity tensor in myocardium (sigma_il, sigma_el, 
-                                                                 # sigma_it, sigma_et, alpha, beta). If None take default values.
+        self.myocardium = myocardium # MyocardialMesh object
         self.save_pmjs        = save_pmjs
         self.kmax             = kmax # iterations to converge to ecg
 
@@ -111,10 +109,10 @@ class BO_Purkinje():
         dir,model = os.path.split(self.patient)
         pat       = model.split('-')[0]
         
-        Endo = EndocardialMesh(myo_mesh            = f"{dir}/{pat}_mesh_oriented.vtk",
-                               electrodes_position = f"{dir}/electrode_pos.pkl",
-                               fibers              = f"{dir}/{pat}_f0_oriented.vtk",
-                               conductivity_params = self.conductivity_params_Endo)
+        # Endo = EndocardialMesh(myo_mesh            = f"{dir}/{pat}_mesh_oriented.vtk",
+        #                        electrodes_position = f"{dir}/electrode_pos.pkl",
+        #                        fibers              = f"{dir}/{pat}_f0_oriented.vtk",
+        #                        conductivity_params = self.conductivity_params_Endo)
 
         # we set activation in {L,R} trees
         # NOTE to simulate block, set to large value
@@ -158,7 +156,7 @@ class BO_Purkinje():
             
         # initialize the coupling points
         x0      = onp.r_[ LVpmj, RVpmj, PVCs ]
-        x0_xyz  = onp.r_[ LVtree.xyz[LVpmj,:], RVtree.xyz[RVpmj,:], Endo.xyz[PVCs,:] ]
+        x0_xyz  = onp.r_[ LVtree.xyz[LVpmj,:], RVtree.xyz[RVpmj,:], self.myocardium.xyz[PVCs,:] ]
         x0_side = onp.r_[ onp.repeat('L', LVpmj.size),
                         onp.repeat('R', RVpmj.size),
                         onp.repeat('M', PVCs.size) ]
@@ -189,7 +187,7 @@ class BO_Purkinje():
             x0_vals[SIDE_RV] = RVtree.activate_fim(onp.r_[RVroot,x0[SIDE_RV]], onp.r_[RVroot_time,x0_vals[SIDE_RV]])
             
             # activate the myocardium at PMJs
-            myo_vals = Endo.activate_fim(x0_xyz, x0_vals, return_only_pmjs = True)
+            myo_vals = self.myocardium.activate_fim(x0_xyz, x0_vals, return_only_pmjs = True)
 
             # early sites
             nnLV = (myo_vals[SIDE_LV] - x0_vals[SIDE_LV] + tol_act < 0).sum()
@@ -211,7 +209,7 @@ class BO_Purkinje():
                 LVtree.save_pmjs(f"output/patient{pat}/LVpmjs_{k:02d}.vtu")
                 RVtree.save(f"output/patient{pat}/RVtree_{k:02d}.vtu")
                 RVtree.save_pmjs(f"output/patient{pat}/RVpmjs_{k:02d}.vtu")
-                Endo.save_pv(f"output/patient{pat}/Endo_{k:02d}.vtu")
+                self.myocardium.save_pv(f"output/patient{pat}/Endo_{k:02d}.vtu")
 
             # NOTE: we do not check the error, because we pace the 3D model
             # at non-vertices, while the output is piecewise linear. Therefore,
@@ -227,7 +225,7 @@ class BO_Purkinje():
             #    break
 
             # check on ECG
-            ecg_new = Endo.new_get_ecg(record_array=False).copy()
+            ecg_new = self.myocardium.new_get_ecg(record_array=False).copy()
         
             if ecg is not None:
                 ecg_err = onp.linalg.norm(ecg - ecg_new) / onp.linalg.norm(ecg)
@@ -245,8 +243,8 @@ class BO_Purkinje():
         #     Endo.save(f"/content/drive/MyDrive/Purkinje/{name_var}_{side}_results/{propeiko.fpar['prefix']}_Endo_{n_sim:03d}.vtp")
         #     # propeiko.save(f"/content/drive/MyDrive/Purkinje/{name_var}_{side}_results/{propeiko.fpar['prefix']}_Myo_{n_sim:03d}.vtu")
 
-        ecg = Endo.new_get_ecg()
-        return ecg, Endo, LVtree, RVtree
+        ecg = self.myocardium.new_get_ecg()
+        return ecg, LVtree, RVtree
     
     
     
